@@ -490,7 +490,7 @@ void imprimir_arquivos_na_pasta(const char *caminho) {
 
 int main() {
   signal(SIGINT, manipulador_sigint); // Registra manipulador de sinal SIGINT
-  printf("Iniciando o servidor e printando DB atual...\n");
+  printf("Iniciando o servidor\n");
 
   // imprimir_arquivos_na_pasta(PASTA_USUARIOS); //Chamada teste
 
