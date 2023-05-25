@@ -273,6 +273,74 @@ unsigned int clilen;
 struct sockaddr_in serv_addr, cli_addr;
 int sockfd;
 
+#define TAMANHO_MAX_BUFFER_IMG 1500 // Maximum buffer size for a packet
+#define MAX_PACOTES 10000
+
+typedef struct {
+    size_t tamanho_img; // tamanho da imagem que estamos enviando
+    int seq_n; // qual a ordem desse pacote específico
+    char data[TAMANHO_MAX_BUFFER_IMG];
+} Packet;
+
+
+size_t calcular_tamanho_imagem(const char* nome_arquivo) {
+    FILE* arquivo = fopen(nome_arquivo, "rb");
+    if (arquivo == NULL) {
+        printf("Falha ao abrir o arquivo de imagem\n");
+        return 0;
+    }
+
+    // Posiciona o ponteiro no final do arquivo
+    fseek(arquivo, 0, SEEK_END);
+
+    // Obtém o tamanho do arquivo
+    long tamanho_arquivo = ftell(arquivo);
+
+    // Fecha o arquivo
+    fclose(arquivo);
+
+    if (tamanho_arquivo < 0) {
+        printf("Falha ao obter o tamanho do arquivo de imagem\n");
+        return 0;
+    }
+
+    return (size_t)tamanho_arquivo;
+}
+
+size_t calcular_num_pacotes(size_t tamanho_imagem) {
+    size_t num_pacotes = tamanho_imagem / TAMANHO_MAX_BUFFER_IMG;
+    if (tamanho_imagem % TAMANHO_MAX_BUFFER_IMG != 0) {
+        num_pacotes++;
+    }
+    return num_pacotes;
+}
+
+int enviar_imagem(const char* dados_imagem, size_t tamanho_imagem) {
+    size_t num_pacotes = calcular_num_pacotes(tamanho_imagem);
+    size_t bytes_enviados = 0;
+
+    for (size_t i = 0; i < num_pacotes; i++) {
+        size_t offset = i * TAMANHO_MAX_BUFFER_IMG;
+        size_t tamanho_pacote = (i == num_pacotes - 1) ? tamanho_imagem - offset : TAMANHO_MAX_BUFFER_IMG;
+
+        Packet pacote;
+        pacote.tamanho_img = tamanho_imagem;
+        pacote.seq_n = i;
+        memcpy(pacote.data, dados_imagem + offset, tamanho_pacote);
+
+        int bytes_enviados_pacote = sendto(sockfd, &pacote, sizeof(Packet), 0,
+               (struct sockaddr *) &cli_addr, clilen);
+
+        if (bytes_enviados_pacote < 0) {
+            perror("Erro ao enviar pacote");
+            return -1;
+        }
+
+        bytes_enviados += bytes_enviados_pacote;
+    }
+
+    return 0;
+}
 
 void lidar_com_comando(const char *comando) {
   json_object *json_obj = json_tokener_parse(comando);
@@ -322,7 +390,47 @@ void lidar_com_comando(const char *comando) {
       if (resposta == NULL) resposta = "Não achamos ninguém com esse email\n";
       printf("Listagem concluída.\n");
 
-    } else {
+    } else if (strcmp(command, "download_user_img") == 0) {
+        // Devolve usuário com o devido email
+        printf("Preparando para enviar a imagem...\n");
+        const char *email = json_object_get_string(payload);
+
+        char caminho_completo[100];
+        sprintf(caminho_completo, "%s/%s.jpg", PASTA_USUARIOS, email);
+        size_t tamanho_img = calcular_tamanho_imagem(caminho_completo);
+
+        resposta = NULL;
+        if (tamanho_img == 0) resposta = "Não temos a foto desse usuário";
+        else {
+            printf("Iniciando envio da imagem.\n");
+            // Abrir o arquivo para leitura binária
+            FILE* arquivo = fopen(caminho_completo, "rb");
+            if (arquivo == NULL) {
+                perror("Erro ao abrir arquivo");
+                exit(EXIT_FAILURE);
+            }
+
+            // Alocar memória para armazenar os dados da imagem
+            char* dados_imagem = (char*)malloc(tamanho_img);
+            if (dados_imagem == NULL) {
+                perror("Erro de alocação de memória");
+                exit(EXIT_FAILURE);
+            }
+
+            // Ler os dados da imagem do arquivo
+            size_t bytes_lidos = fread(dados_imagem, sizeof(char), tamanho_img, arquivo);
+            if (bytes_lidos != tamanho_img) {
+                perror("Erro ao ler dados da imagem");
+                exit(EXIT_FAILURE);
+            }
+
+            enviar_imagem(dados_imagem, tamanho_img);
+
+            printf("Finalizando envio de imagem\n");
+            
+        }
+    }
+    else {
       // Comando inválido
       resposta = "Comando inválido\n";
       printf("Comando inválido\n");
@@ -333,7 +441,8 @@ void lidar_com_comando(const char *comando) {
     printf("Entrada inválida/Formato de objeto JSON inválido\n");
   }
 
-  sendto(sockfd, resposta, strlen(resposta), 0,
+  if (resposta != NULL)
+      sendto(sockfd, resposta, strlen(resposta), 0,
          (struct sockaddr *) &cli_addr, clilen);
 
   json_object_put(json_obj);
@@ -383,7 +492,7 @@ int main() {
   signal(SIGINT, manipulador_sigint); // Registra manipulador de sinal SIGINT
   printf("Iniciando o servidor e printando DB atual...\n");
 
-  imprimir_arquivos_na_pasta(PASTA_USUARIOS); //Chamada teste
+  // imprimir_arquivos_na_pasta(PASTA_USUARIOS); //Chamada teste
 
   sockfd = socket(AF_INET, SOCK_DGRAM, 0);
   if (sockfd < 0)
